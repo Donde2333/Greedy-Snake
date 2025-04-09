@@ -2,17 +2,15 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // 接口：提交分数，同时存储 IP 与地址信息
+    // 提交分数接口：存储分数及 IP/地理信息
     if (url.pathname === '/submit' && request.method === 'POST') {
       try {
         const body = await request.json();
         const score = parseInt(body.score || 0);
-        // 获取 IP 与地理信息
         const ip = request.headers.get('cf-connecting-ip') || 'unknown';
         const city = request.cf?.city || '';
         const country = request.cf?.country || '';
         const record = { score, ip, city, country };
-        // 使用时间戳和随机数生成唯一 id
         const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         await env.GAME_SCORES.put(id, JSON.stringify(record));
         return new Response('OK', { status: 200 });
@@ -24,7 +22,7 @@ export default {
       }
     }
 
-    // 接口：获取排行榜数据（前10名）
+    // 获取排行榜接口：返回前 10 名分数数据
     if (url.pathname === '/scores' && request.method === 'GET') {
       try {
         const listRes = await env.GAME_SCORES.list({ limit: 1000 });
@@ -35,9 +33,7 @@ export default {
             const parsed = JSON.parse(val);
             return {
               score: parsed.score,
-              location: parsed.city
-                ? `${parsed.city}, ${parsed.country}`
-                : parsed.country || '未知地区'
+              location: parsed.city ? `${parsed.city}, ${parsed.country}` : parsed.country || '未知地区'
             };
           })
         );
@@ -69,7 +65,7 @@ const html = `<!DOCTYPE html>
   <title>🐍 贪吃蛇</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <style>
-    /* 全局设置与背景 */
+    /* 全局样式及背景 */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -92,7 +88,7 @@ const html = `<!DOCTYPE html>
       margin-bottom: 10px;
       letter-spacing: 1px;
     }
-    /* Canvas 设置，注意宽高属性将在 JS 中动态设置 */
+    /* Canvas 样式，宽高将在 JS 中动态设置 */
     canvas {
       border: 2px solid #ecf0f1;
       border-radius: 6px;
@@ -165,11 +161,20 @@ const html = `<!DOCTYPE html>
       font-size: 0.95rem;
       line-height: 1.5;
     }
+    /* 移动端适配 */
+    @media (max-width: 600px) {
+      canvas {
+        width: 300px;
+        height: 300px;
+      }
+      h1 { font-size: 2rem; }
+      #startBtn { font-size: 1rem; padding: 8px 20px; }
+    }
   </style>
 </head>
 <body>
   <h1>🐍 贪吃蛇游戏</h1>
-  <p class="subtitle">使用方向键或滑动控制 | 吃食物得分 | 躲避碰撞</p>
+  <p class="subtitle">使用方向键或滑动控制 | 吃食物得分 | 小心碰撞</p>
   <canvas id="gameCanvas"></canvas>
   <button id="startBtn">开始游戏</button>
 
@@ -185,7 +190,7 @@ const html = `<!DOCTYPE html>
   </div>
 
   <script>
-    // 根据窗口宽度设置画布尺寸：桌面设备使用 500x500，移动设备使用 300x300
+    // 根据窗口宽度设置画布尺寸：桌面设备 500x500，移动设备 300x300
     const canvas = document.getElementById('gameCanvas');
     const isDesktop = window.innerWidth > 600;
     const CANVAS_SIZE = isDesktop ? 500 : 300;
@@ -205,25 +210,29 @@ const html = `<!DOCTYPE html>
     let score = 0;
     let isGameStarted = false;
 
+    // 初始化游戏：蛇位于画布中心附近
     function initGame() {
-      // 起点设置为画布中心附近，确保适应动态画布大小
       snake = [
         { x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 },
-        { x: (CANVAS_SIZE / 2) - 10, y: CANVAS_SIZE / 2 },
-        { x: (CANVAS_SIZE / 2) - 20, y: CANVAS_SIZE / 2 }
+        { x: CANVAS_SIZE / 2 - 10, y: CANVAS_SIZE / 2 },
+        { x: CANVAS_SIZE / 2 - 20, y: CANVAS_SIZE / 2 }
       ];
       direction = 'right';
       score = 0;
       generateFood();
     }
 
+    // 随机生成食物，同时随机指定类型（20% 概率 bonus 食物）
     function generateFood() {
+      const type = Math.random() < 0.2 ? 'bonus' : 'normal';
       food = {
         x: Math.floor(Math.random() * (CANVAS_SIZE / 10)) * 10,
-        y: Math.floor(Math.random() * (CANVAS_SIZE / 10)) * 10
+        y: Math.floor(Math.random() * (CANVAS_SIZE / 10)) * 10,
+        type
       };
     }
 
+    // 游戏主循环
     function gameStep() {
       const head = { ...snake[0] };
       switch (direction) {
@@ -233,9 +242,9 @@ const html = `<!DOCTYPE html>
         case 'down': head.y += 10; break;
       }
 
-      // 检测碰撞：边界或自身
+      // 边界检测和自撞检测
       if (
-        head.x < 0 || head.x >= CANVAS_SIZE || 
+        head.x < 0 || head.x >= CANVAS_SIZE ||
         head.y < 0 || head.y >= CANVAS_SIZE ||
         snake.some(seg => seg.x === head.x && seg.y === head.y)
       ) {
@@ -243,8 +252,14 @@ const html = `<!DOCTYPE html>
         return;
       }
 
+      // 吃食物
       if (head.x === food.x && head.y === food.y) {
-        score += 10;
+        // 根据食物类型获得分数
+        if (food.type === 'bonus') {
+          score += 20;
+        } else {
+          score += 10;
+        }
         generateFood();
       } else {
         snake.pop();
@@ -253,15 +268,19 @@ const html = `<!DOCTYPE html>
       draw();
     }
 
+    // 绘制画面
     function draw() {
       ctx.fillStyle = '#2c3e50';
       ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      // 绘制蛇（绿色）
       ctx.fillStyle = '#27ae60';
       snake.forEach(seg => ctx.fillRect(seg.x, seg.y, 10, 10));
-      ctx.fillStyle = '#e74c3c';
+      // 根据食物类型选择颜色：普通食物红色，bonus 金色
+      ctx.fillStyle = food.type === 'bonus' ? '#f1c40f' : '#e74c3c';
       ctx.fillRect(food.x, food.y, 10, 10);
     }
 
+    // 结束游戏
     function endGame() {
       clearInterval(gameLoop);
       isGameStarted = false;
@@ -270,6 +289,7 @@ const html = `<!DOCTYPE html>
       submitScore(score);
     }
 
+    // 重新开始游戏
     function restartGame() {
       gameOverDiv.style.display = 'none';
       startBtn.disabled = false;
@@ -287,6 +307,7 @@ const html = `<!DOCTYPE html>
       }
     });
 
+    // 开始按钮事件
     startBtn.addEventListener('click', () => {
       if (!isGameStarted) {
         isGameStarted = true;
@@ -299,6 +320,7 @@ const html = `<!DOCTYPE html>
     // 禁止触摸滚动
     window.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
+    // 提交分数到服务器，并刷新排行榜
     async function submitScore(score) {
       await fetch('/submit', {
         method: 'POST',
@@ -308,6 +330,7 @@ const html = `<!DOCTYPE html>
       loadLeaderboard();
     }
 
+    // 加载排行榜数据
     async function loadLeaderboard() {
       const res = await fetch('/scores');
       const data = await res.json();
@@ -316,6 +339,7 @@ const html = `<!DOCTYPE html>
         : '<p>暂无排行榜数据</p>';
     }
 
+    // 初始化加载排行榜
     loadLeaderboard();
   </script>
 </body>
