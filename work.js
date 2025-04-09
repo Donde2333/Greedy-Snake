@@ -106,7 +106,7 @@ const HTML_TEMPLATE = `
 <!DOCTYPE html>
 <html>
 <head>
-  <title>贪吃蛇</title>
+  <title>贪吃蛇大作战</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
     body {
@@ -168,6 +168,25 @@ const HTML_TEMPLATE = `
       border-radius: 5px;
       font-size: 14px;
     }
+    .food-tip {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0,0,0,0.5);
+      padding: 8px;
+      border-radius: 8px;
+    }
+    .food-type {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin: 3px 0;
+    }
+    .food-color {
+      width: 15px;
+      height: 15px;
+      border-radius: 3px;
+    }
     @media (max-width: 480px) {
       body {
         padding: 10px;
@@ -178,12 +197,17 @@ const HTML_TEMPLATE = `
       #leaderboard {
         padding: 10px;
       }
+      .food-tip {
+        top: 5px;
+        right: 5px;
+        font-size: 12px;
+      }
     }
   </style>
 </head>
 <body>
   <h1>🐍 贪吃蛇大作战</h1>
-  <p class="subtitle">使用方向键或滑动控制 | 吃食物得分 | 避免碰撞</p>
+  <p class="subtitle">方向键或滑动控制 | 吃食物得分 | 避免碰撞</p>
   <canvas id="game"></canvas>
   <div id="controls">
     <button id="startBtn">开始游戏</button>
@@ -198,12 +222,26 @@ const HTML_TEMPLATE = `
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const CELL = 10;
+    const FOOD_TYPES = [
+      { color: '#e74c3c', score: 10 },
+      { color: '#f1c40f', score: 20 }
+    ];
+    const TOTAL_DURATION = 5000; // 食物总存在时间
+    const BLINK_DURATION = 3000;  // 闪烁持续时间
+    
     let snake = [];
-    let food = {};
+    let food = {
+      x: 0,
+      y: 0,
+      type: FOOD_TYPES[0],
+      spawnTime: 0
+    };
     let dir = 'right';
     let score = 0;
     let gameLoop;
     let isPlaying = false;
+    let foodTimeout = null;
+    let blinkInterval = null;
 
     // 移动端触摸处理
     let touchStartX = 0;
@@ -236,15 +274,15 @@ const HTML_TEMPLATE = `
       e.preventDefault();
     }
 
-    // 初始化游戏
     function initGame() {
-      // 自适应画布大小（强制为CELL整数倍）
+      if (foodTimeout) clearTimeout(foodTimeout);
+      if (blinkInterval) clearInterval(blinkInterval);
+      
       const maxSize = Math.min(window.innerWidth * 0.8, 400);
       const size = Math.floor(maxSize / CELL) * CELL;
       canvas.width = size;
       canvas.height = size;
 
-      // 确保起始位置在CELL网格上
       const startX = Math.floor(size/2 / CELL) * CELL;
       const startY = Math.floor(size/2 / CELL) * CELL;
       
@@ -255,7 +293,7 @@ const HTML_TEMPLATE = `
       ];
       dir = 'right';
       score = 0;
-      spawnFood();
+      food = spawnFood();
       updateScore();
       drawInitialBoard();
     }
@@ -266,14 +304,63 @@ const HTML_TEMPLATE = `
     }
 
     function spawnFood() {
+      if (foodTimeout) clearTimeout(foodTimeout);
+      if (blinkInterval) clearInterval(blinkInterval);
+
       const cols = canvas.width / CELL;
       const rows = canvas.height / CELL;
+      const foodType = Math.random() < 0.1 ? FOOD_TYPES[1] : FOOD_TYPES[0];
+      
       do {
         food = {
           x: Math.floor(Math.random() * cols) * CELL,
-          y: Math.floor(Math.random() * rows) * CELL
+          y: Math.floor(Math.random() * rows) * CELL,
+          type: foodType,
+          spawnTime: Date.now()
         };
       } while (snake.some(s => s.x === food.x && s.y === food.y));
+
+      if (foodType === FOOD_TYPES[1]) {
+        foodTimeout = setTimeout(() => {
+          food = spawnFood();
+          redrawGame();
+        }, TOTAL_DURATION);
+
+        // 启动闪烁定时器
+        blinkInterval = setInterval(() => {
+          redrawGame();
+        }, 50);
+      }
+
+      return food;
+    }
+
+    function redrawGame() {
+      drawInitialBoard();
+      ctx.fillStyle = '#27ae60';
+      snake.forEach(s => ctx.fillRect(s.x+1, s.y+1, CELL-2, CELL-2));
+      
+      // 处理食物闪烁
+      if (food.type === FOOD_TYPES[1]) {
+        const elapsed = Date.now() - food.spawnTime;
+        if (elapsed > TOTAL_DURATION - BLINK_DURATION) {
+          const remain = TOTAL_DURATION - elapsed;
+          const progress = 1 - remain / BLINK_DURATION;
+          const blinkSpeed = 300 - (250 * progress); // 闪烁速度从300ms到50ms
+          const blinkState = Math.floor((Date.now() - food.spawnTime) / blinkSpeed) % 2;
+          
+          if (blinkState === 0) {
+            ctx.fillStyle = food.type.color;
+            ctx.fillRect(food.x+1, food.y+1, CELL-2, CELL-2);
+          }
+        } else {
+          ctx.fillStyle = food.type.color;
+          ctx.fillRect(food.x+1, food.y+1, CELL-2, CELL-2);
+        }
+      } else {
+        ctx.fillStyle = food.type.color;
+        ctx.fillRect(food.x+1, food.y+1, CELL-2, CELL-2);
+      }
     }
 
     function updateScore() {
@@ -291,7 +378,6 @@ const HTML_TEMPLATE = `
         case 'right': head.x += CELL; break;
       }
 
-      // 精确碰撞检测
       const hitWall = head.x < 0 || head.x >= canvas.width || 
                      head.y < 0 || head.y >= canvas.height;
       const hitSelf = snake.some(s => s.x === head.x && s.y === head.y);
@@ -303,33 +389,28 @@ const HTML_TEMPLATE = `
 
       snake.unshift(head);
       
-      // 精确食物碰撞检测
       if (head.x === food.x && head.y === food.y) {
-        score += 10;
+        score += food.type.score;
         updateScore();
-        spawnFood();
+        food = spawnFood();
       } else {
         snake.pop();
       }
 
-      // 绘制
-      drawInitialBoard();
-      ctx.fillStyle = '#27ae60';
-      snake.forEach(s => ctx.fillRect(s.x+1, s.y+1, CELL-2, CELL-2)); // 留出间隙
-      ctx.fillStyle = '#e74c3c';
-      ctx.fillRect(food.x+1, food.y+1, CELL-2, CELL-2);
+      redrawGame();
     }
 
     function endGame() {
       isPlaying = false;
       clearInterval(gameLoop);
+      clearInterval(blinkInterval);
       submitScore(score);
       drawInitialBoard();
       ctx.fillStyle = '#e74c3c';
       ctx.font = '24px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(\`游戏结束！得分：\${score} 分\`, canvas.width / 2, canvas.height / 2);
+      ctx.fillText(\`🤣游戏结束！得分：\${score} 分👊\`, canvas.width / 2, canvas.height / 2);
       const startBtn = document.getElementById('startBtn');
       startBtn.textContent = "重新开始";
       startBtn.disabled = false;
@@ -360,7 +441,6 @@ const HTML_TEMPLATE = `
       }
     });
 
-    // 分数处理
     async function submitScore() {
       try {
         await fetch('/submit', {
