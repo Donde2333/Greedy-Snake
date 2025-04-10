@@ -95,7 +95,7 @@ export default {
       }
     }
 
-    // 返回HTML页面
+    // 返回完整HTML页面
     return new Response(HTML_TEMPLATE, {
       headers: { "Content-Type": "text/html; charset=UTF-8" }
     });
@@ -120,6 +120,10 @@ const HTML_TEMPLATE = `
       flex-direction: column;
       align-items: center;
       -webkit-tap-highlight-color: transparent;
+    }
+    /* 禁止滚动样式 */
+    body.no-scroll {
+      overflow: hidden;
     }
     canvas {
       border: 3px solid rgba(255,255,255,0.3);
@@ -187,6 +191,10 @@ const HTML_TEMPLATE = `
       height: 15px;
       border-radius: 3px;
     }
+    #shield {
+      font-size: 1.2em;
+      color: #3498db;
+    }
     @media (max-width: 480px) {
       body {
         padding: 10px;
@@ -212,42 +220,76 @@ const HTML_TEMPLATE = `
   <div id="controls">
     <button id="startBtn">开始游戏</button>
     <div id="score">得分: 0</div>
+    <div id="shield" style="display:none;">🛡️护盾激活</div>
   </div>
   <div id="leaderboard">
     <h3>🏆 排行榜</h3>
     <div id="ranks"></div>
   </div>
-
   <script>
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
-    const CELL = 10;
-    const FOOD_TYPES = [
-      { color: '#e74c3c', score: 10 },
-      { color: '#f1c40f', score: 20 }
-    ];
-    const TOTAL_DURATION = 5000; // 食物总存在时间
-    const BLINK_DURATION = 3000;  // 闪烁持续时间
-    
+    let CELL = 10;
     let snake = [];
-    let food = {
-      x: 0,
-      y: 0,
-      type: FOOD_TYPES[0],
-      spawnTime: 0
-    };
+    let food = { x: 0, y: 0, type: null, spawnTime: 0 };
     let dir = 'right';
     let score = 0;
     let gameLoop;
     let isPlaying = false;
     let foodTimeout = null;
     let blinkInterval = null;
+    let hasShield = false;
+    let particles = [];
 
-    // 移动端触摸处理
+    // 新增变量用于移动端滑动控制
     let touchStartX = 0;
     let touchStartY = 0;
     const minSwipeDistance = 30;
 
+    const FOOD_TYPES = [
+      { color: '#e74c3c', score: 10 },
+      { color: '#f1c40f', score: 20, blink: true },
+      { color: '#3498db', score: 0, shield: true, blink: true }
+    ];
+
+    const TOTAL_DURATION = 5000;
+    const BLINK_DURATION = 3000;
+
+    // 初始化画布，确保适配不同移动设备
+    function initCanvas() {
+      const maxSize = Math.min(window.innerWidth * 0.8, 400);
+      const size = Math.floor(maxSize / CELL) * CELL;
+      canvas.width = size;
+      canvas.height = size;
+      CELL = size / Math.floor(size / CELL);
+      ctx.fillStyle = '#2c3e50';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // 游戏初始化只在点击开始后执行
+    function initGame() {
+      if (foodTimeout) clearTimeout(foodTimeout);
+      if (blinkInterval) clearInterval(blinkInterval);
+      particles = [];
+
+      const startX = Math.floor(canvas.width / 2 / CELL) * CELL;
+      const startY = Math.floor(canvas.height / 2 / CELL) * CELL;
+      
+      snake = [
+        { x: startX, y: startY },
+        { x: startX - CELL, y: startY },
+        { x: startX - 2 * CELL, y: startY }
+      ];
+      dir = 'right';
+      score = 0;
+      hasShield = false;
+      updateScore();
+      updateShieldUI();
+      food = spawnFood();
+      redrawGame();
+    }
+
+    // 移动端滑动开始
     function handleTouchStart(e) {
       if (!isPlaying) return;
       const touch = e.touches[0];
@@ -256,6 +298,7 @@ const HTML_TEMPLATE = `
       e.preventDefault();
     }
 
+    // 移动端滑动移动
     function handleTouchMove(e) {
       if (!isPlaying) return;
       const touch = e.touches[0];
@@ -274,81 +317,99 @@ const HTML_TEMPLATE = `
       e.preventDefault();
     }
 
-    function initGame() {
-      if (foodTimeout) clearTimeout(foodTimeout);
-      if (blinkInterval) clearInterval(blinkInterval);
-      
-      const maxSize = Math.min(window.innerWidth * 0.8, 400);
-      const size = Math.floor(maxSize / CELL) * CELL;
-      canvas.width = size;
-      canvas.height = size;
-
-      const startX = Math.floor(size/2 / CELL) * CELL;
-      const startY = Math.floor(size/2 / CELL) * CELL;
-      
-      snake = [
-        { x: startX, y: startY },
-        { x: startX - CELL, y: startY },
-        { x: startX - CELL*2, y: startY }
-      ];
-      dir = 'right';
-      score = 0;
-      food = spawnFood();
-      updateScore();
-      drawInitialBoard();
-    }
-
-    function drawInitialBoard() {
-      ctx.fillStyle = '#2c3e50';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-
+    // 随机生成食物
     function spawnFood() {
       if (foodTimeout) clearTimeout(foodTimeout);
       if (blinkInterval) clearInterval(blinkInterval);
 
       const cols = canvas.width / CELL;
       const rows = canvas.height / CELL;
-      const foodType = Math.random() < 0.1 ? FOOD_TYPES[1] : FOOD_TYPES[0];
+      let foodType;
+      const roll = Math.random();
+      if (hasShield) {
+        if (roll < 0.3) {
+          foodType = FOOD_TYPES[1];
+        } else {
+          foodType = FOOD_TYPES[0];
+        }
+      } else {
+        if (roll < 0.3) {
+          foodType = FOOD_TYPES[1];
+        } else if (roll < 0.6) {
+          foodType = FOOD_TYPES[2];
+        } else {
+          foodType = FOOD_TYPES[0];
+        }
+      }
       
+      let newFood;
       do {
-        food = {
+        newFood = {
           x: Math.floor(Math.random() * cols) * CELL,
           y: Math.floor(Math.random() * rows) * CELL,
           type: foodType,
           spawnTime: Date.now()
         };
-      } while (snake.some(s => s.x === food.x && s.y === food.y));
+      } while (snake.some(s => s.x === newFood.x && s.y === newFood.y));
 
-      if (foodType === FOOD_TYPES[1]) {
+      if (foodType.blink) {
         foodTimeout = setTimeout(() => {
           food = spawnFood();
           redrawGame();
         }, TOTAL_DURATION);
 
-        // 启动闪烁定时器
         blinkInterval = setInterval(() => {
           redrawGame();
         }, 50);
       }
 
-      return food;
+      return newFood;
     }
 
+    function updateScore() {
+      document.getElementById('score').textContent = '得分: ' + score;
+    }
+
+    function updateShieldUI() {
+      document.getElementById('shield').style.display = hasShield ? 'block' : 'none';
+    }
+
+    // 创建粒子效果函数，修改粒子半径变小
+    function createParticles(x, y, color) {
+      for (let i = 0; i < 20; i++) {
+        particles.push({
+          x: x + CELL / 2,
+          y: y + CELL / 2,
+          dx: (Math.random() - 0.5) * 4,
+          dy: (Math.random() - 0.5) * 4,
+          radius: 1 + Math.random() * 1,
+          color,
+          alpha: 1
+        });
+      }
+    }
+
+    // 重新绘制整个游戏画面，包括蛇、食物、粒子效果
     function redrawGame() {
-      drawInitialBoard();
-      ctx.fillStyle = '#27ae60';
-      snake.forEach(s => ctx.fillRect(s.x+1, s.y+1, CELL-2, CELL-2));
+      ctx.fillStyle = '#2c3e50';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       
-      // 处理食物闪烁
-      if (food.type === FOOD_TYPES[1]) {
+      snake.forEach((s, index) => {
+        if (index === 0 && hasShield) {
+          ctx.fillStyle = '#3498db';
+        } else {
+          ctx.fillStyle = '#27ae60';
+        }
+        ctx.fillRect(s.x+1, s.y+1, CELL-2, CELL-2);
+      });
+      
+      if (food.type.blink) {
         const elapsed = Date.now() - food.spawnTime;
         if (elapsed > TOTAL_DURATION - BLINK_DURATION) {
           const remain = TOTAL_DURATION - elapsed;
           const progress = 1 - remain / BLINK_DURATION;
-          const blinkSpeed = 300 - (250 * progress); // 闪烁速度从300ms到50ms
+          const blinkSpeed = 300 - (250 * progress);
           const blinkState = Math.floor((Date.now() - food.spawnTime) / blinkSpeed) % 2;
-          
           if (blinkState === 0) {
             ctx.fillStyle = food.type.color;
             ctx.fillRect(food.x+1, food.y+1, CELL-2, CELL-2);
@@ -361,15 +422,25 @@ const HTML_TEMPLATE = `
         ctx.fillStyle = food.type.color;
         ctx.fillRect(food.x+1, food.y+1, CELL-2, CELL-2);
       }
+      
+      // 绘制粒子效果并更新状态
+      particles.forEach((p) => {
+        ctx.globalAlpha = p.alpha;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+        p.x += p.dx;
+        p.y += p.dy;
+        p.alpha -= 0.05;
+      });
+      ctx.globalAlpha = 1;
+      particles = particles.filter(p => p.alpha > 0);
     }
 
-    function updateScore() {
-      document.getElementById('score').textContent = \`得分: \${score}\`;
-    }
-
+    // 游戏逻辑主循环
     function gameStep() {
       if (!isPlaying) return;
-
       const head = { ...snake[0] };
       switch (dir) {
         case 'up': head.y -= CELL; break;
@@ -378,34 +449,64 @@ const HTML_TEMPLATE = `
         case 'right': head.x += CELL; break;
       }
 
-      const hitWall = head.x < 0 || head.x >= canvas.width || 
-                     head.y < 0 || head.y >= canvas.height;
+      const hitWall = head.x < 0 || head.y < 0 || head.x >= canvas.width || head.y >= canvas.height;
       const hitSelf = snake.some(s => s.x === head.x && s.y === head.y);
-      
+
       if (hitWall || hitSelf) {
-        endGame();
-        return;
+        if (hasShield) {
+          hasShield = false;
+          updateShieldUI();
+          let allowedDirections;
+          if (dir === 'up' || dir === 'down') {
+            allowedDirections = ['left', 'right'];
+          } else {
+            allowedDirections = ['up', 'down'];
+          }
+          dir = allowedDirections[Math.floor(Math.random() * allowedDirections.length)];
+          return;
+        } else {
+          endGame();
+          return;
+        }
       }
 
       snake.unshift(head);
-      
+
       if (head.x === food.x && head.y === food.y) {
-        score += food.type.score;
-        updateScore();
+        createParticles(food.x, food.y, food.type.color);
+        if (food.type.shield) {
+          hasShield = true;
+          updateShieldUI();
+        } else {
+          score += food.type.score;
+          updateScore();
+        }
         food = spawnFood();
       } else {
         snake.pop();
       }
 
+      if (food.type.blink && Date.now() - food.spawnTime > TOTAL_DURATION) {
+        food = spawnFood();
+      }
+
       redrawGame();
     }
 
+    // 游戏结束时清理超时器、粒子，并绘制结束提示（不会自动重新绘制新的蛇与食物）
     function endGame() {
       isPlaying = false;
       clearInterval(gameLoop);
       clearInterval(blinkInterval);
+      clearTimeout(foodTimeout);
+      particles = [];
+
+      // 恢复页面滚动
+      document.body.classList.remove("no-scroll");
+
       submitScore(score);
-      drawInitialBoard();
+      ctx.fillStyle = '#2c3e50';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = '#e74c3c';
       ctx.font = '24px sans-serif';
       ctx.textAlign = 'center';
@@ -416,12 +517,14 @@ const HTML_TEMPLATE = `
       startBtn.disabled = false;
     }
 
-    // 事件监听
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
     canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
     
     document.getElementById('startBtn').addEventListener('click', () => {
       if (!isPlaying) {
+        // 禁止页面滚动
+        document.body.classList.add("no-scroll");
+
         isPlaying = true;
         const startBtn = document.getElementById('startBtn');
         startBtn.textContent = "游戏中...";
@@ -430,7 +533,7 @@ const HTML_TEMPLATE = `
         gameLoop = setInterval(gameStep, 100);
       }
     });
-
+    
     document.addEventListener('keydown', (e) => {
       if (!isPlaying) return;
       switch (e.key) {
@@ -441,7 +544,7 @@ const HTML_TEMPLATE = `
       }
     });
 
-    async function submitScore() {
+    async function submitScore(score) {
       try {
         await fetch('/submit', {
           method: 'POST',
@@ -471,13 +574,15 @@ const HTML_TEMPLATE = `
       }
     }
 
-    // 初始化
-    initGame();
+    initCanvas();
     loadLeaderboard();
     setInterval(loadLeaderboard, 30000);
     window.addEventListener('resize', () => {
-      initGame();
-      if (!isPlaying) drawInitialBoard();
+      if (isPlaying) {
+        initGame();
+      } else {
+        initCanvas();
+      }
     });
   </script>
 </body>
