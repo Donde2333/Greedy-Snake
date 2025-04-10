@@ -1,2 +1,5 @@
 # Greedy-Snake
-hello world!
+🤣hello world!
+
+By cloudflare workers + KV
+🎮Demo:https://hello.yan.ip-ddns.com/
